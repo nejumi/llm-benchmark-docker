@@ -13,7 +13,7 @@ ENV  DEBIAN_FRONTEND=noninteractive \
 # 1. OS パッケージ
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-        git build-essential curl cmake automake libtool zlib1g-dev && \
+        git build-essential curl cmake automake libtool zlib1g-dev sudo && \
     rm -rf /var/lib/apt/lists/*
 
 # 2. llm‑leaderboard 取得
@@ -33,13 +33,12 @@ RUN --mount=type=cache,target=/root/.cache/pip \
         langchain-cohere==0.2.0
 
 # 4. Juman++
-RUN set -eux; \
-    git clone --depth 1 https://github.com/ku-nlp/jumanpp.git /tmp/jumanpp; \
-    mkdir -p /tmp/jumanpp/build; \
-    cd /tmp/jumanpp/build; \
-    cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/local; \
-    make -j"$(nproc)"; make install; ldconfig; \
-    rm -rf /tmp/jumanpp
+RUN bash scripts/install_jumanpp.sh
+
+# Juman++ を評価スクリプトから確実に見えるように
+ENV PATH="/usr/local/bin:${PATH}" \
+    JUMANPP_COMMAND=/usr/local/bin/jumanpp \
+    JUMANPP_DICDIR=/usr/local/share/jumandic
 
 # 5. ENTRYPOINT（シェル経由で変数展開）
 ENTRYPOINT ["/bin/sh", "-c", "python scripts/run_eval.py -c ${CFG}"]
