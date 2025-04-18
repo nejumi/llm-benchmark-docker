@@ -1,52 +1,67 @@
 # syntax=docker/dockerfile:1.5
 # ───────────────────────────────────────────────
-# 基盤: CUDA‑12.1 + PyTorch‑2.3 公式ランタイム
+# 1. CUDA 12.1 + PyTorch 2.3 ランタイム
 # ───────────────────────────────────────────────
 FROM pytorch/pytorch:2.3.0-cuda12.1-cudnn8-runtime
 
-# ──────────────── 1. ENV ────────────────
-ENV DEBIAN_FRONTEND=noninteractive \
-    PIP_NO_CACHE_DIR=1 \
-    PIP_DEFAULT_TIMEOUT=1200 \
-    PIP_RETRIES=20 \
-    PIP_PROGRESS_BAR=off \
-    PYTHONUNBUFFERED=1
+# ───────────────────────────────────────────────
+# 2. 変数
+#    * CFG は run_eval.py へ渡す設定ファイル名（拡張子なし）
+#      → docker‑compose.yml で上書きできます
+# ───────────────────────────────────────────────
+ARG  CFG=my_config          # `docker build --build‑arg CFG=foo …`
+ENV  DEBIAN_FRONTEND=noninteractive \
+     PIP_NO_CACHE_DIR=1 \
+     PIP_DEFAULT_TIMEOUT=1200 \
+     PIP_RETRIES=20 \
+     PIP_PROGRESS_BAR=off \
+     PYTHONUNBUFFERED=1 \
+     CFG=${CFG}
 
-# run_eval.py に渡す **拡張子なし** の設定ファイル名
-ENV CFG=my_config
-
-# ──────────────── 2. OS パッケージ ────────────────
+# ───────────────────────────────────────────────
+# 3. Linux パッケージ
+# ───────────────────────────────────────────────
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         git build-essential curl cmake automake libtool zlib1g-dev && \
     rm -rf /var/lib/apt/lists/*
 
-# ──────────────── 3. ソース取得 ────────────────
+# ───────────────────────────────────────────────
+# 4. llm‑leaderboard 取得
+# ───────────────────────────────────────────────
 WORKDIR /workspace
 RUN git clone --depth 1 https://github.com/wandb/llm-leaderboard.git
 WORKDIR /workspace/llm-leaderboard
 
-# ──────────────── 4. Python 依存 (2 段) ────────────────
-# 4‑A requirements.txt（pytorch CUDA 版 index を追加）
+# ───────────────────────────────────────────────
+# 5. Python 依存ライブラリ（2 レイヤー）
+# ───────────────────────────────────────────────
+# 5‑A: requirements.txt
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --upgrade pip && \
     pip install \
       --extra-index-url https://download.pytorch.org/whl/cu124 \
       -r requirements.txt
 
-# 4‑B langchain 系はバージョン衝突回避のため別 layer
+# 5‑B: langchain 系だけ別レイヤー
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install \
       langchain-community==0.2.17 \
       langchain-cohere==0.2.0
 
-# ──────────────── 5. Juman++ ────────────────
-RUN bash scripts/install_jumanpp.sh
+# ───────────────────────────────────────────────
+# 6. Juman++ を root でビルド（sudo 不要）
+# ───────────────────────────────────────────────
+RUN set -eux; \
+    git clone --depth 1 https://github.com/ku-nlp/jumanpp.git /tmp/jumanpp; \
+    mkdir -p /tmp/jumanpp/build; \
+    cd       /tmp/jumanpp/build; \
+    cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/local; \
+    make -j"$(nproc)"; make install; ldconfig; \
+    rm -rf /tmp/jumanpp
 
-# ──────────────── 6. ローカル config をイメージに取り込む ────────────────
-# ※ bind‑mount 運用なら丸ごと削除して OK
-COPY ./config/*.yaml /workspace/llm-leaderboard/configs/
-
-# ──────────────── 7. 実行 ────────────────
-# bash 経由で ENV を展開し、-c に拡張子無の CFG を渡す
-ENTRYPOINT ["bash", "-c", "python scripts/run_eval.py -c ${CFG}"]
+# ───────────────────────────────────────────────
+# 7. ENTRYPOINT
+#    -c には拡張子を付けない  (run_eval.py が .yaml を補完)
+# ───────────────────────────────────────────────
+ENTRYPOINT ["bash", "-c", "python llm-leaderboard/scripts/run_eval.py -c ${CFG}"]
