@@ -1,7 +1,10 @@
 # syntax=docker/dockerfile:1.5
+# ───────────────────────────────────────────────
+# 基盤: CUDA‑12.1 + PyTorch‑2.3 公式ランタイム
+# ───────────────────────────────────────────────
 FROM pytorch/pytorch:2.3.0-cuda12.1-cudnn8-runtime
 
-# ───────────── 1. ENV 共通設定 ─────────────
+# ──────────────── 1. ENV ────────────────
 ENV DEBIAN_FRONTEND=noninteractive \
     PIP_NO_CACHE_DIR=1 \
     PIP_DEFAULT_TIMEOUT=1200 \
@@ -9,37 +12,41 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PIP_PROGRESS_BAR=off \
     PYTHONUNBUFFERED=1
 
-# config ファイル名（拡張子なしで指定）
-ENV CFG=config
+# run_eval.py に渡す **拡張子なし** の設定ファイル名
+ENV CFG=my_config
 
-# ───────────── 2. OS パッケージ ─────────────
+# ──────────────── 2. OS パッケージ ────────────────
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         git build-essential curl cmake automake libtool zlib1g-dev && \
     rm -rf /var/lib/apt/lists/*
 
-# ───────────── 3. llm‑leaderboard ─────────────
+# ──────────────── 3. ソース取得 ────────────────
 WORKDIR /workspace
 RUN git clone --depth 1 https://github.com/wandb/llm-leaderboard.git
 WORKDIR /workspace/llm-leaderboard
 
-# ───────────── 4‑A. 依存ライブラリ ─────────────
+# ──────────────── 4. Python 依存 (2 段) ────────────────
+# 4‑A requirements.txt（pytorch CUDA 版 index を追加）
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --upgrade pip && \
-    pip install --extra-index-url https://download.pytorch.org/whl/cu124 \
+    pip install \
+      --extra-index-url https://download.pytorch.org/whl/cu124 \
       -r requirements.txt
 
-# ───────────── 4‑B. langchain だけ別レイヤー ─────────────
+# 4‑B langchain 系はバージョン衝突回避のため別 layer
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install langchain-community==0.2.17 langchain-cohere==0.2.0
+    pip install \
+      langchain-community==0.2.17 \
+      langchain-cohere==0.2.0
 
-# ───────────── 5. Juman++ ─────────────
-RUN set -eux && \
-    git clone --depth 1 https://github.com/ku-nlp/jumanpp.git /tmp/jumanpp && \
-    cmake -S /tmp/jumanpp -B /tmp/jumanpp/build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/local && \
-    cmake --build /tmp/jumanpp/build -j"$(nproc)" && \
-    cmake --install /tmp/jumanpp/build && \
-    rm -rf /tmp/jumanpp && ldconfig
+# ──────────────── 5. Juman++ ────────────────
+RUN bash scripts/install_jumanpp.sh
 
-# ───────────── 6. ENTRYPOINT ─────────────
-ENTRYPOINT ["/bin/sh", "-c", "python3 scripts/run_eval.py -c ${CFG}"]
+# ──────────────── 6. ローカル config をイメージに取り込む ────────────────
+# ※ bind‑mount 運用なら丸ごと削除して OK
+COPY ./config/*.yaml /workspace/llm-leaderboard/configs/
+
+# ──────────────── 7. 実行 ────────────────
+# bash 経由で ENV を展開し、-c に拡張子無の CFG を渡す
+ENTRYPOINT ["bash", "-c", "python scripts/run_eval.py -c ${CFG}"]
