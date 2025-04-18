@@ -1,0 +1,44 @@
+version: "3.9"
+
+services:
+  vllm:
+    image: vllm/vllm-openai:latest
+    runtime: nvidia
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["0","1"]      # GPU 0‑1 を推論専用に
+              capabilities: [gpu]
+    command: >
+      --model SakanaAI/TinySwallow-1.5B-Instruct
+      --dtype half
+      --max-model-len 3500
+      --served-model-name SakanaAI/TinySwallow-1.5B-Instruct
+    environment:
+      - HUGGINGFACE_HUB_TOKEN=${HUGGINGFACE_HUB_TOKEN}
+    volumes:
+      - ~/.cache/huggingface:/root/.cache/huggingface
+    ports:
+      - "8000:8000"
+    ipc: host
+
+  eval:
+    build: ./eval
+    depends_on: [vllm]
+    runtime: nvidia
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["2","3"]      # GPU 2‑3 を評価用に
+              capabilities: [gpu]
+    environment:
+      - WANDB_API_KEY=${WANDB_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - BASE_URL=http://vllm:8000        # ← 同ネットワーク内 DNS
+    volumes:
+      - ~/.cache/huggingface:/root/.cache/huggingface
+      - ./config:/workspace/config:ro
