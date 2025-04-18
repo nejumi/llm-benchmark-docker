@@ -38,6 +38,7 @@ services:
     environment:
       - CFG=my_config
       - JUMANPP_COMMAND=/usr/local/bin/jumanpp
+      - PATH=/usr/local/bin:/opt/conda/bin:/usr/bin:/bin
       - WANDB_API_KEY=${WANDB_API_KEY}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - BASE_URL=http://vllm:8000        # ← 同ネットワーク内 DNS
